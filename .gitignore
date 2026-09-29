@@ -1,0 +1,41 @@
+# --- Secrets. Never commit. The Groq key must not reach git (PRD P6, C9) ---
+.env
+.env.*
+!.env.example
+
+# --- Virtualenvs ---
+.venv/
+venv/
+env/
+ENV/
+.python-version
+
+# --- Python bytecode / build artefacts ---
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# --- Test + tooling caches ---
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# --- Corpus artefacts that are machine-specific ---
+# data/chunks/ and data/embeddings_preview.txt are deliberately NOT ignored —
+# they are graded deliverables (F9) and the evaluator must be able to read them
+# without running anything.
+data/raw/
+data/chroma/
+
+# --- Editor / OS ---
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

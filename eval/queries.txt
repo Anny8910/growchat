@@ -1,0 +1,39 @@
+# Evaluation query set. One per line: "<label> | <question>"
+#
+# Labels: factual | advice | off_topic | out_of_corpus
+#
+# PII probes are deliberately NOT in this file. PRD §5.4 treats a PII value
+# stored anywhere - including in a tracked source file - as an explicit
+# failure, so the PII test cases are assembled at runtime from fragments in
+# tests/test_guardrails.py and never exist as a literal on disk.
+
+# --- in scope: must pass the guardrails and reach retrieval (PRD 4.1 / 4.2) ---
+factual | What is the expense ratio of the HDFC Large Cap Fund?
+factual | What is the lock-in period for HDFC ELSS Tax Saver Fund?
+factual | What is the minimum SIP amount for HDFC Balanced Advantage Fund?
+factual | What is the exit load on HDFC Small Cap Fund?
+factual | What's the benchmark of HDFC Equity (Flexi Cap) Fund?
+factual | What risk category does HDFC Balanced Advantage Fund fall under?
+factual | Can I redeem HDFC ELSS before 3 years?
+factual | How do I download my capital gains statement?
+factual | What is the minimum lump sum investment for HDFC Large Cap?
+factual | What is the NAV of HDFC Flexi Cap?
+
+# --- must refuse: advice (PRD 4.3) ---
+advice | Should I invest in HDFC ELSS or HDFC Flexi Cap?
+advice | Is now a good time to buy the HDFC Large Cap Fund?
+advice | Which HDFC fund has given the best returns?
+advice | If I invest ₹10,000/month for 10 years, what will I get?
+advice | Is HDFC Small Cap safe for my retirement?
+advice | Tell me if I should sell my HDFC Flexi Cap.
+
+# --- must refuse: off topic (outside the five scheme pages entirely) ---
+off_topic | What is the weather in Paris tomorrow?
+off_topic | Write me a poem about money.
+off_topic | Explain quantum computing to me.
+off_topic | What is today's price of gold?
+
+# --- out of corpus: a mutual fund, but not one of the five (F10) ---
+out_of_corpus | What is the expense ratio of HDFC Mid-Cap?
+out_of_corpus | What is the exit load on Parag Parag Flexi Cap Fund?
+out_of_corpus | Can I redeem HDFC Nifty 50 Index Fund before 3 years?

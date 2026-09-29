@@ -1,0 +1,21 @@
+# Streamlit configuration for this project.
+#
+# fileWatcherType is off because the watcher walks every imported module, which
+# makes `transformers` probe its optional vision dependencies and print a wall
+# of `No module named 'torchvision'` tracebacks into the terminal on every
+# server start. The app does not use them, and the noise reads as a crash.
+#
+# The trade-off is that editing app.py no longer live-reloads — restart the
+# server (Ctrl-C, then run it again). To get hot reload back while developing,
+# override on the command line:
+#
+#     streamlit run app.py --server.fileWatcherType auto
+
+[server]
+fileWatcherType = "none"
+
+[browser]
+# Skips Streamlit's first-run "enter your email" onboarding prompt, which
+# otherwise blocks the server on startup when it is launched without a TTY
+# (e.g. in the background or over a deploy).
+gatherUsageStats = false

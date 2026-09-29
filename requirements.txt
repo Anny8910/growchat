@@ -1,0 +1,51 @@
+# Direct dependencies — pinned.
+# Generated against Python 3.12. Every version below is the current PyPI release
+# at the time of writing. Bump deliberately, never as a side effect of a fix.
+#
+# WHY PIN EXACTLY (not ~=): the vector store is persisted to disk and reloaded by
+# a process that may have been built at a different time (Render runs build and
+# start as separate phases). A silent numpy/chromadb bump between build and run is
+# how you get a 384-dim mismatch against a store written by a different build.
+# See docs/implementation.md Phase 3.
+
+# --- Ingestion: load + extract + chunk -------------------------------------
+requests==2.34.2
+beautifulsoup4==4.15.0
+lxml==6.1.3
+
+# --- Embedding + vector store ----------------------------------------------
+# C7/C8: embedding model and vector DB are fixed by the brief. The model
+# itself (sentence-transformers/all-MiniLM-L6-v2) is configured in config.py,
+# not here.
+sentence-transformers==6.1.0
+torch==2.14.0
+chromadb==1.5.9
+
+# Pinned transitively on purpose: numpy and onnxruntime sit under both the
+# embedder and the store, and a mismatch between them is a runtime error, not
+# an install error.
+numpy==2.5.3
+
+# --- Query: guardrails, retrieval, LLM, UI ----------------------------------
+groq==1.7.0
+python-dotenv==1.2.3
+
+# Phase 6 UI. Streamlit rather than the FastAPI + static/index.html route in
+# docs/architecture.md §3; PRD §7 allows either ("uvicorn main:app or streamlit
+# run app.py"). The answer path is unchanged — the UI only draws what
+# rag/chatsession.py produces. Pins to its own transitive deps.
+streamlit==1.64.0
+
+# --- Tests ------------------------------------------------------------------
+pytest==9.1.1
+
+# ---------------------------------------------------------------------------
+# LOCAL (macOS/Linux, CPU):
+#   pip install -r requirements.txt
+#
+# LINUX (e.g. a container or a Render deploy) — install torch CPU-only FIRST, or
+# the default wheel pulls ~2.5GB of CUDA libraries and the build will time out:
+#   pip install --index-url https://download.pytorch.org/whl/cpu torch
+#   pip install -r requirements.txt
+# This is the single most likely reason a first deploy fails.
+# ---------------------------------------------------------------------------
