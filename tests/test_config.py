@@ -7,6 +7,7 @@ silently and only surface as a missing key at the first real request.
 
 from __future__ import annotations
 
+import os
 import subprocess
 
 import pytest
@@ -173,3 +174,64 @@ def test_print_settings_runs(capsys):
     for source in config.SOURCES:
         assert source["url"] in out
     assert "Groq API key" in out
+
+
+# --- Streamlit Cloud secrets -------------------------------------------------
+# Cloud stores secrets in `st.secrets`, not os.environ. config.py mirrors them
+# so `_env_str` finds them; these pin the three rules that must not drift.
+#
+# A plain dict stands in for `st.secrets`: the bridge only iterates it and
+# subscripts it, so this avoids depending on Streamlit's private internals.
+
+
+@pytest.fixture
+def cloud_secret(monkeypatch):
+    """Simulate a Streamlit script run with one secret configured."""
+    import streamlit
+    import streamlit.runtime.scriptrunner as sr
+
+    monkeypatch.delenv("GROQ_API_KEY", raising=False)
+    monkeypatch.setattr(sr, "get_script_run_ctx", lambda: object())
+    monkeypatch.setattr(streamlit, "secrets", {"GROQ_API_KEY": "gsk_from_cloud"})
+    return "gsk_from_cloud"
+
+
+def test_streamlit_secret_reaches_the_environment(cloud_secret):
+    config._load_streamlit_secrets()
+    assert os.environ["GROQ_API_KEY"] == cloud_secret
+
+
+def test_streamlit_secret_does_not_override_a_real_env_var(cloud_secret):
+    """.env and the platform environment must keep winning over a secret."""
+    os.environ["GROQ_API_KEY"] = "gsk_from_env"
+    try:
+        config._load_streamlit_secrets()
+        assert os.environ["GROQ_API_KEY"] == "gsk_from_env"
+    finally:
+        del os.environ["GROQ_API_KEY"]
+
+
+def test_secrets_are_ignored_outside_a_streamlit_run(monkeypatch):
+    """The CLI and the test suite import config outside any script run."""
+    import streamlit
+    import streamlit.runtime.scriptrunner as sr
+
+    monkeypatch.delenv("GROQ_API_KEY", raising=False)
+    monkeypatch.setattr(sr, "get_script_run_ctx", lambda: None)
+    monkeypatch.setattr(streamlit, "secrets", {"GROQ_API_KEY": "gsk_from_cloud"})
+    config._load_streamlit_secrets()
+    assert "GROQ_API_KEY" not in os.environ
+
+
+def test_a_broken_secrets_file_does_not_break_import(monkeypatch):
+    """A bad secrets.toml must surface as a missing key, not an import crash."""
+    import streamlit
+    import streamlit.runtime.scriptrunner as sr
+
+    class Boom:
+        def __iter__(self):
+            raise RuntimeError("malformed secrets.toml")
+
+    monkeypatch.setattr(sr, "get_script_run_ctx", lambda: object())
+    monkeypatch.setattr(streamlit, "secrets", Boom())
+    config._load_streamlit_secrets()

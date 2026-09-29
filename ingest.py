@@ -8,12 +8,14 @@ be reviewed without loading the model.
 from __future__ import annotations
 
 import argparse
+import fcntl
 import sys
 import time
 from collections import Counter
+from pathlib import Path
 
 import config
-from rag.chunker import build_chunks, write_chunk_file
+from rag.chunker import ChunkError, build_chunks, read_chunks, write_chunk_file
 from rag.extract import extract_all
 from rag.loader import load_all, snapshot_date
 
@@ -96,6 +98,78 @@ def run_store_phase(chunks: list) -> int:
         print(f"\nWarning: could not write embeddings preview: {exc}", file=sys.stderr)
 
     return 0
+
+
+def ensure_store(wait_seconds: int = 300) -> tuple[bool, str]:
+    """Build the vector store from the committed corpus if it isn't there yet.
+
+    Streamlit Community Cloud has no build step, so a fresh clone reaches the
+    app with an empty data/chroma/ and every visitor would otherwise be told to
+    run `python ingest.py` on a machine they don't control. Building on first
+    use makes the deploy self-sufficient.
+
+    The build is guarded by an exclusive file lock and re-checked *after* the
+    lock is taken, so N browser tabs opening at once produce one build rather
+    than N racing writers into the same SQLite file.
+
+    Returns (ok, message). Never raises: the caller decides how to surface a
+    failure, and a broken build should read as one sentence, not a traceback.
+    """
+    if config.chroma_store_exists():
+        return True, "store already present"
+
+    lock_path = config.ROOT / "data" / ".store-build.lock"
+    try:
+        lock_path.parent.mkdir(parents=True, exist_ok=True)
+        handle = lock_path.open("w")
+    except OSError as exc:
+        return False, f"could not create the build lock at {lock_path}: {exc}"
+
+    deadline = time.monotonic() + wait_seconds
+    with handle:
+        while True:
+            try:
+                fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except OSError:
+                # Another session is mid-build. Wait for it rather than racing.
+                if time.monotonic() >= deadline:
+                    return False, (
+                        f"timed out after {wait_seconds}s waiting for another "
+                        f"session to finish building the vector store"
+                    )
+                time.sleep(2)
+
+        try:
+            # Re-check under the lock: the session that held it may have
+            # completed the build while we were waiting.
+            if config.chroma_store_exists():
+                return True, "store built by another session"
+
+            print(f"No vector store at {config.CHROMA_DIR}; building it now.")
+            try:
+                chunks = read_chunks()
+            except ChunkError as exc:
+                return False, (
+                    f"cannot build the vector store: {exc}. The committed "
+                    f"corpus {config.CHUNKS_FILE} is missing or malformed."
+                )
+            print(f"Read {len(chunks)} chunks from {config.CHUNKS_FILE} (no fetch)")
+
+            status = run_store_phase(chunks)
+            if status != 0:
+                return False, (
+                    "vector store build failed; see the build log above for "
+                    "the underlying error"
+                )
+        except Exception as exc:  # noqa: BLE001 - reported, not raised
+            return False, f"vector store build failed: {exc}"
+        finally:
+            fcntl.flock(handle, fcntl.LOCK_UN)
+
+    if not config.chroma_store_exists():
+        return False, f"vector store build did not produce {config.CHROMA_DIR}"
+    return True, "store built"
 
 
 def main() -> int:

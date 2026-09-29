@@ -33,6 +33,9 @@ htmlcov/
 # without running anything.
 data/raw/
 data/chroma/
+# Written by ingest.ensure_store() when the app builds the store on first use
+# (Streamlit Cloud has no build step). Transient, never a deliverable.
+data/.store-build.lock
 
 # --- Editor / OS ---
 .vscode/

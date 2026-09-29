@@ -16,6 +16,39 @@ ROOT = Path(__file__).resolve().parent
 load_dotenv(ROOT / ".env")
 
 
+def _load_streamlit_secrets() -> None:
+    """Copy Streamlit Cloud secrets into the environment before anything reads it.
+
+    Streamlit Community Cloud stores secrets in `st.secrets`, not the process
+    environment, so `_env_str("GROQ_API_KEY")` would come back empty and the
+    UI would report a missing key even though one is configured. Mirroring them
+    into os.environ keeps config.py the single place settings are read from,
+    which is what keeps the CLI, the tests and the deployed app consistent.
+
+    No-op outside a Streamlit script run, and never overwrites a real env var,
+    so a value from .env or the process environment still wins.
+    """
+    try:
+        from streamlit.runtime.scriptrunner import get_script_run_ctx
+
+        if get_script_run_ctx() is None:
+            return
+        import streamlit as st
+
+        for key in st.secrets:
+            value = st.secrets[key]
+            if isinstance(value, str) and not os.getenv(key):
+                os.environ[key] = value
+    except Exception:
+        # Streamlit absent, no secrets configured, or an unreadable secrets
+        # file. Startup validation reports the missing key far more usefully
+        # than an import error could.
+        return
+
+
+_load_streamlit_secrets()
+
+
 class MissingConfigError(RuntimeError):
     """Raised when a required setting is absent, with instructions attached."""
 

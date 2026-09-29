@@ -207,6 +207,39 @@ and its disk is ephemeral, so `data/chroma/` is rebuilt on every deploy. A paid
 `disk` in `render.yaml` with `mountPath: /opt/render/project/src/data/chroma`
 would stop the rebuild if deploys get slow.
 
+## Deploying to Streamlit Community Cloud
+
+Cloud differs from Render in two ways that matter, and the app handles both.
+
+| | Render | Streamlit Cloud |
+|---|---|---|
+| Build step | `render_build.sh` | **none** — it just runs `streamlit run` |
+| Secrets | Environment Variables (`os.environ`) | **Settings → Secrets** (`st.secrets`) |
+
+**Main file path:** `app.py`
+
+1. **Settings → Secrets**, add `GROQ_API_KEY`. Optionally `GROQ_MODEL`
+   (`openai/gpt-oss-120b`) — the code default is the 70B model, which is *not*
+   what `GROQ_MAX_TOKENS=1024` was tuned for, so set it.
+2. Deploy.
+
+**The store builds itself on first use.** With no build step there is nothing to
+run `ingest.py`, so `ingest.ensure_store()` builds it from the committed
+`data/chunks/chunks.txt` the first time the app loads — under a spinner, about
+30 seconds, once. It never re-scrapes Groww, so the deployed facts stay identical
+to the reviewed corpus. Concurrent first visits are serialised with an exclusive
+lock and re-checked, so N tabs produce one build, not N racing writers. A failed
+build is reported as one sentence rather than a traceback.
+
+**Secrets are bridged automatically.** `config.py` mirrors `st.secrets` into
+`os.environ` at import, so the same settings code path works on Cloud, Render and
+locally. A real environment variable still wins over a secret, and a malformed
+secrets file degrades to "no key configured" instead of an import crash.
+
+If you later re-ingest while the server is running, **restart it** — Chroma holds
+the collection in memory and will keep querying a deleted one.
+
+
 
 ## Known limits
 

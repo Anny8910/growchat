@@ -67,12 +67,48 @@ def test_the_welcome_line_shows_on_an_empty_session():
     assert "Ask me about these five HDFC mutual fund schemes" in body
 
 
-def test_a_missing_store_is_reported_instead_of_crashing(monkeypatch):
+def test_a_missing_store_is_built_on_first_use(monkeypatch):
+    """Streamlit Cloud has no build step, so the app builds the store itself.
+
+    Without this the deploy shows every visitor "No vector store. Run python
+    ingest.py first." on a machine they don't control.
+
+    `ingest.ensure_store` is patched rather than `app.ensure_store` because
+    AppTest re-executes app.py as __main__, so its `from ingest import` binding
+    happens inside the run and only sees a patch applied to `ingest`.
+    """
+    import config
+    import ingest
+
+    state = {"built": False, "called": 0}
+
+    def fake_ensure(*_a, **_k):
+        state["called"] += 1
+        state["built"] = True          # a successful build makes it appear
+        return True, "store built"
+
+    monkeypatch.setattr(config, "chroma_store_exists", lambda: state["built"])
+    monkeypatch.setattr(ingest, "ensure_store", fake_ensure)
+
+    at = _run()
+    assert at.exception == []
+    assert state["called"] == 1, "ensure_store was never called"
+    assert not [e for e in at.error if "vector store" in e.value.lower()]
+    assert at.chat_input, "the app should continue to a usable chat"
+
+
+def test_a_failed_store_build_is_reported_instead_of_crashing(monkeypatch):
     """A setup mistake must be a sentence on screen, not a stack trace."""
     import config
+    import ingest
 
     monkeypatch.setattr(config, "chroma_store_exists", lambda: False)
+    monkeypatch.setattr(
+        ingest, "ensure_store",
+        lambda *_a, **_k: (False, "corpus is missing or malformed"),
+    )
+
     at = _run()
     assert at.exception == []
     errors = " ".join(e.value for e in at.error)
-    assert "ingest.py" in errors
+    assert "corpus is missing or malformed" in errors

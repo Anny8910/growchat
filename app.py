@@ -19,6 +19,7 @@ from __future__ import annotations
 import streamlit as st
 
 import config
+from ingest import ensure_store
 from rag.chatsession import ChatSession, startup_problems
 
 st.set_page_config(
@@ -122,6 +123,24 @@ def main() -> None:
     st.caption(f"_{config.DISCLAIMER}_")
 
     problems = startup_problems()
+
+    # Streamlit Cloud has no build step, so the store is built on first use
+    # rather than shipped in git. Done before the store check above reports it,
+    # and before the encoder is loaded, so a warm deploy pays this once.
+    if not config.chroma_store_exists():
+        with st.spinner(
+            "Preparing the vector store from the committed corpus "
+            "(first run only, about 30 seconds)…"
+        ):
+            built, detail = ensure_store()
+        if not built:
+            st.error(f"Could not prepare the vector store: {detail}")
+            st.stop()
+        st.success(f"Vector store ready ({detail}).")
+        # The encoder and store client are cached per process, so they were
+        # never opened against the missing directory.
+        st.rerun()
+
     if problems:
         for problem in problems:
             st.error(problem)
