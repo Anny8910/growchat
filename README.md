@@ -148,6 +148,8 @@ ranking, so a question about one fund cannot be answered from another's chunk.
 ```
 config.py          every tunable + the 5-URL allowlist (the only place these live)
 requirements.txt   pinned; see the note in the file about Linux/CPU-only torch
+render.yaml        Render blueprint (build + start command, port, health check)
+render_build.sh    Render build step: CPU torch, then build store from corpus
 ingest.py          Phase 2+  Load → Extract → Chunk → Embed → Store
 app.py             Phase 6  Streamlit chat UI (streamlit run app.py)
 rag/               loader, extract, chunker, embedder, store, retriever,
@@ -159,6 +161,52 @@ eval/              Phase 5  query evaluation set
 ```
 
 `data/chunks/chunks.txt` and `data/embeddings_preview.txt` are committed on purpose — it is a graded deliverable and must be readable without running anything. `data/raw/` and `data/chroma/` are machine-specific and ignored.
+
+## Deploying to Render
+
+`render.yaml` holds the blueprint, so Render reads the build and start commands from the repo.
+
+1. **Settings → Build & Deploy**
+   - Build Command: `bash render_build.sh`
+   - Start Command: **leave blank** — it comes from `render.yaml`. A Start
+     Command set in the dashboard **overrides** the file, which is how a wrong
+     command survives a fix in git.
+2. **Environment Variables** — add `GROQ_API_KEY`. `GROQ_MODEL` is already
+   defaulted in the blueprint. Never commit the key.
+3. Deploy.
+
+The build step matters, because `data/chroma/` is git-ignored and so is absent in
+a fresh checkout. `render_build.sh`:
+
+- installs **CPU-only** torch from the PyTorch CPU index. The default wheel
+  drags in nvidia-cudnn, nvidia-nccl, nvidia-cublas, triton and cuda-toolkit —
+  around 3GB of wheels a free CPU instance cannot finish downloading in time.
+- builds the store with `ingest.py --from-chunks`, which reads the committed
+  `data/chunks/chunks.txt` instead of re-scraping Groww. The deployed facts stay
+  byte-identical to the reviewed corpus, and a transient fetch block cannot fail
+  the deploy.
+- runs a retrieval smoke test, so a broken store fails the build rather than
+  surfacing as a stack trace in the UI.
+
+### If the deploy fails with `No module named 'src'`
+
+The start command is pointing at a package that does not exist. This project has
+no `src/`; the chat UI is `app.py` at the repo root and the correct command is:
+
+```bash
+streamlit run app.py --server.address 0.0.0.0 --server.port $PORT --server.headless true
+```
+
+`ingest.py` is a **build-time** step, not the server — running it as the start
+command is the specific mistake that produced that error.
+
+### Free-plan caveats
+
+The free plan sleeps after inactivity (first request after a cold start is slow)
+and its disk is ephemeral, so `data/chroma/` is rebuilt on every deploy. A paid
+`disk` in `render.yaml` with `mountPath: /opt/render/project/src/data/chroma`
+would stop the rebuild if deploys get slow.
+
 
 ## Known limits
 

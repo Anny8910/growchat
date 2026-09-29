@@ -106,7 +106,29 @@ def main() -> int:
         action="store_true",
         help="stop after writing data/chunks/chunks.txt, skip the model",
     )
+    parser.add_argument(
+        "--from-chunks",
+        action="store_true",
+        help=(
+            "skip fetch/extract and build the store from the committed "
+            "data/chunks/chunks.txt. Used by the Render build so a deploy "
+            "never re-scrapes the source pages."
+        ),
+    )
     args = parser.parse_args()
+
+    if args.from_chunks:
+        from rag.chunker import ChunkError, read_chunks
+
+        try:
+            chunks = read_chunks()
+        except ChunkError as exc:
+            print(f"\nChunk corpus error:\n  {exc}", file=sys.stderr)
+            return 1
+        print(f"Read {len(chunks)} chunks from {config.CHUNKS_FILE} (no fetch)")
+        per_scheme = Counter(chunk.scheme_code for chunk in chunks)
+        print("  per scheme :", dict(per_scheme))
+        return run_store_phase(chunks)
 
     status, chunks = run_chunk_phase(args.force)
     if status != 0:

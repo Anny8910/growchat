@@ -1,0 +1,43 @@
+# Render blueprint for the Streamlit chat UI.
+#
+# The reported failure was a start command of `python -m src.ingest.run`:
+# this project has no `src` package, so the interpreter had nothing to import.
+# The chat UI is a Streamlit app at the repo root, so the command below starts
+# app.py. `ingest.py` is a build-time step, not the server.
+#
+#   Render dashboard -> your service -> Settings -> Build & Deploy
+#     Build Command  : bash render_build.sh
+#     Start Command  : (blank — Render reads it from this file)
+#
+# If you set a Start Command in the dashboard it OVERRIDES the one here, which
+# is how the wrong command survived in the first place. Leave it blank.
+
+services:
+  - type: web
+    name: growchat
+    runtime: python
+    plan: free
+    region: singapore
+    # Pin the interpreter. requirements.txt is pinned exactly for the same
+    # reason: a 384-dim store written by one build must be readable by the
+    # next. Do not let this float.
+    pythonVersion: "3.12.11"
+    buildCommand: bash render_build.sh
+    # Streamlit, not uvicorn. $PORT is supplied by Render; 0.0.0.0 is required
+    # because the service must be reachable from outside its container.
+    startCommand: >-
+      streamlit run app.py
+      --server.address 0.0.0.0
+      --server.port $PORT
+      --server.headless true
+      --browser.gatherUsageStats false
+    healthCheckPath: /_stcore/health
+    # Never bake the key in. Set GROQ_API_KEY under Environment Variables.
+    envVars:
+      - key: GROQ_MODEL
+        value: openai/gpt-oss-120b
+      - key: PYTHONUNBUFFERED
+        value: "1"
+    # data/chroma is git-ignored, so it has to be built during the build
+    # phase. Nothing to declare here: the free plan has no persistent disk,
+    # and the store is rebuilt from the committed corpus on every deploy.

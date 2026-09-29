@@ -4,8 +4,12 @@ from __future__ import annotations
 
 import re
 
+import pytest
+
 import config
-from rag.chunker import build_chunks, write_chunk_file
+from rag.chunker import (
+    Chunk, ChunkError, _hash, build_chunks, read_chunks, write_chunk_file,
+)
 from rag.extract import extract_all
 from rag.loader import load_all, snapshot_date
 
@@ -108,3 +112,83 @@ def test_expected_facts_are_present():
     assert "Minimum SIP: ₹500" in body
     assert "Exit load of 1% if redeemed within 1 year" in body
     assert "NIFTY 500 Total Return Index" in body
+
+
+# --- Round-trip: the committed corpus must be loadable without re-scraping ---
+# `ingest.py --from-chunks` (used by the Render build) rebuilds the vector store
+# from data/chunks/chunks.txt. If read_chunks() lost or mangled any field, the
+# deployed store would silently differ from the reviewed one, so these assert
+# exact equality against the in-memory chunks built from the live pages.
+
+
+def test_read_chunks_round_trips_the_committed_corpus():
+    parsed = read_chunks()
+    assert len(parsed) == len(CHUNKS)
+    for original, restored in zip(CHUNKS, parsed):
+        assert restored.text == original.text
+        assert restored.source_url == original.source_url
+        assert restored.scheme_name == original.scheme_name
+        assert restored.scheme_code == original.scheme_code
+        assert restored.category == original.category
+        assert restored.section == original.section
+        assert restored.fields == original.fields
+        assert restored.chunk_index == original.chunk_index
+        assert restored.retrieved_at == original.retrieved_at
+        assert restored.content_hash == original.content_hash
+
+
+def test_read_chunks_text_still_hashes_to_its_stored_hash():
+    """A hash that no longer matches its text means the file was hand-edited."""
+    for chunk in read_chunks():
+        assert _hash(chunk.text) == chunk.content_hash
+
+
+def test_read_chunks_only_reads_allowlisted_urls():
+    for chunk in read_chunks():
+        assert chunk.source_url in config.ALLOWED_URLS
+
+
+def test_read_chunks_requires_a_present_file(tmp_path):
+    with pytest.raises(ChunkError, match="no chunk corpus"):
+        read_chunks(tmp_path / "absent.txt")
+
+
+def test_read_chunks_rejects_a_corpus_with_no_chunks(tmp_path):
+    empty = tmp_path / "chunks.txt"
+    empty.write_text("=" * 78 + "\nCHUNKS\n" + "=" * 78 + "\n", encoding="utf-8")
+    with pytest.raises(ChunkError, match="no chunks found"):
+        read_chunks(empty)
+
+
+def test_read_chunks_rejects_a_truncated_block(tmp_path):
+    good = read_chunks()[0]
+    broken = tmp_path / "chunks.txt"
+    broken.write_text(
+        "=" * 78 + "\nCHUNK 001 of 031\n" + "=" * 78 + "\n"
+        "source_url   : " + good.source_url + "\n"
+        "scheme_name  : " + good.scheme_name + "\n" + "-" * 78 + "\n" + good.text + "\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(ChunkError, match="missing field"):
+        read_chunks(broken)
+
+
+def test_read_chunks_keeps_text_containing_rule_characters(tmp_path):
+    """A line of '=' inside chunk text must not be mistaken for a block end."""
+    tricky = Chunk(
+        text="Expense ratio: 1.21%\n" + "=" * 78 + "\nstill the same chunk",
+        source_url=next(iter(config.ALLOWED_URLS)),
+        scheme_name="HDFC Large Cap Fund – Direct Growth",
+        scheme_code="119018",
+        category="fees",
+        section="direct growth",
+        fields=["expense_ratio"],
+        chunk_index=0,
+        retrieved_at=SNAPSHOT,
+        content_hash="sha256:deadbeefdeadbeef",
+    )
+    path = tmp_path / "chunks.txt"
+    write_chunk_file([tricky], [], path)
+    parsed = read_chunks(path)
+    assert len(parsed) == 1
+    assert parsed[0].text == tricky.text

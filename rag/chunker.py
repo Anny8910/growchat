@@ -14,6 +14,10 @@ RULE = "=" * 78
 THIN_RULE = "-" * 78
 
 
+class ChunkError(RuntimeError):
+    """The chunk corpus is missing, malformed, or internally inconsistent."""
+
+
 @dataclass
 class Chunk:
     text: str
@@ -192,3 +196,88 @@ def write_chunk_file(chunks: list[Chunk], pages: list[dict[str, str]], path: Pat
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(format_chunk_file(chunks, pages), encoding="utf-8")
     return target
+
+
+_CHUNK_MARKER = re.compile(r"^CHUNK (\d+) of (\d+)$")
+_FIELD_LINE = re.compile(r"^([a-z_]+)\s*:\s*(.*)$")
+_FIELDS_WITH_INDEX = {"source_url", "scheme_name", "scheme_code", "category",
+                      "section", "fields", "retrieved_at", "content_hash"}
+
+
+def read_chunks(path: Path | None = None) -> list[Chunk]:
+    """Parse the committed chunk corpus back into `Chunk` objects.
+
+    The inverse of `format_chunk_file`, so a deploy can build the vector store
+    from the reviewed corpus in `data/chunks/chunks.txt` instead of re-scraping
+    the source pages. Keeps the deployed facts identical to the audited ones.
+
+    A block is only treated as finished when a RULE is followed by another
+    CHUNK marker, so a line of `=` inside a chunk's text cannot truncate it.
+    """
+    target = path or config.CHUNKS_FILE
+    if not target.exists():
+        raise ChunkError(f"no chunk corpus at {target}")
+
+    lines = target.read_text(encoding="utf-8").splitlines()
+    chunks: list[Chunk] = []
+    fields: dict[str, str] = {}
+    body: list[str] = []
+    index = -1
+    in_body = False
+
+    def flush() -> None:
+        nonlocal fields, body, index
+        if index < 0:
+            return
+        missing = _FIELDS_WITH_INDEX - fields.keys()
+        if missing:
+            raise ChunkError(
+                f"chunk {index + 1} is missing field(s): {', '.join(sorted(missing))}"
+            )
+        text = "\n".join(body).strip()
+        if not text:
+            raise ChunkError(f"chunk {index + 1} has no text")
+        chunks.append(Chunk(
+            text=text,
+            source_url=fields["source_url"],
+            scheme_name=fields["scheme_name"],
+            scheme_code=fields["scheme_code"],
+            category=fields["category"],
+            section=fields["section"],
+            fields=[f.strip() for f in fields["fields"].split(",") if f.strip()],
+            chunk_index=index,
+            retrieved_at=fields["retrieved_at"],
+            content_hash=fields["content_hash"],
+        ))
+        fields, body, index = {}, [], -1
+
+    for position, line in enumerate(lines):
+        marker = _CHUNK_MARKER.match(line)
+        if marker:
+            flush()
+            in_body = False
+            index = int(marker.group(1)) - 1
+            continue
+        if index < 0:
+            continue
+        if line == THIN_RULE:
+            in_body = True
+            continue
+        if in_body:
+            if line == RULE and _CHUNK_MARKER.match(lines[position + 1] if position + 1 < len(lines) else ""):
+                flush()
+                in_body = False
+            else:
+                body.append(line)
+            continue
+        parsed = _FIELD_LINE.match(line)
+        if parsed and parsed.group(1) in _FIELDS_WITH_INDEX:
+            fields[parsed.group(1)] = parsed.group(2).strip()
+
+    flush()
+    if not chunks:
+        raise ChunkError(f"no chunks found in {target}")
+    expected = [c.chunk_index for c in chunks]
+    if expected != list(range(len(chunks))):
+        raise ChunkError(f"chunk indices are not contiguous from 0: {expected}")
+    return chunks
